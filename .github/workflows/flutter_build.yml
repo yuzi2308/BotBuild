@@ -1,0 +1,71 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'Download URL project ZIP (GitHub Release asset)'
+        required: true
+      tag:
+        description: 'Release tag (untuk referensi)'
+        required: true
+      build_type:
+        description: 'release atau bundle'
+        required: false
+        default: 'release'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 'stable'
+          channel: 'stable'
+          cache: true
+
+      - name: Download project ZIP
+        run: |
+          curl -L -o project.zip "${{ inputs.zip_url }}"
+          mkdir -p project
+          unzip -q project.zip -d project
+
+      - name: Locate pubspec.yaml
+        id: locate
+        run: |
+          PUBSPEC_DIR=$(dirname "$(find project -maxdepth 4 -name pubspec.yaml | head -n1)")
+          if [ -z "$PUBSPEC_DIR" ] || [ "$PUBSPEC_DIR" = "." ]; then PUBSPEC_DIR="project"; fi
+          echo "dir=$PUBSPEC_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Flutter pub get
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: flutter pub get
+
+      - name: Build APK
+        if: ${{ inputs.build_type != 'bundle' }}
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: flutter build apk --release
+
+      - name: Build App Bundle
+        if: ${{ inputs.build_type == 'bundle' }}
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: flutter build appbundle --release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-${{ inputs.tag }}
+          path: |
+            ${{ steps.locate.outputs.dir }}/build/app/outputs/flutter-apk/*.apk
+            ${{ steps.locate.outputs.dir }}/build/app/outputs/bundle/release/*.aab
+          retention-days: 3
+          if-no-files-found: warn
