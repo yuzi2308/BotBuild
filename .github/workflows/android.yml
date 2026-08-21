@@ -1,0 +1,101 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: 'Build Job ID'
+        required: true
+      userId:
+        description: 'User ID'
+        required: true
+      payload:
+        description: 'Build Payload (JSON)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: gradle
+
+      - name: Parse Payload
+        id: payload
+        run: |
+          PAYLOAD=`echo '${{ inputs.payload }}' | base64 -w 0`
+          echo "payload_b64=${PAYLOAD}" >> $GITHUB_OUTPUT
+
+      - name: Download ZIP if needed
+        run: |
+          PAYLOAD=${{ inputs.payload }}
+          if echo "$PAYLOAD" | grep -q "zipAssetUrl"; then
+            ZIP_URL=$(echo "$PAYLOAD" | grep -o '"zipAssetUrl":"[^"]*"' | cut -d'"' -f4)
+            if [ -n "$ZIP_URL" ]; then
+              echo "Downloading project ZIP..."
+              curl -L -o project.zip "$ZIP_URL" || echo "ZIP download failed, continuing..."
+              if [ -f "project.zip" ]; then
+                unzip -q project.zip -d src/ || true
+              fi
+            fi
+          fi
+
+      - name: Build APK
+        env:
+          JOB_ID: ${{ inputs.jobId }}
+          PAYLOAD: ${{ inputs.payload }}
+        run: |
+          echo "Starting build for job: $JOB_ID"
+          
+          # Default configurations
+          APP_NAME="Web2APK"
+          PACKAGE_NAME="com.web2apk.app"
+          
+          # Extract from payload if available
+          if [ -n "$PAYLOAD" ]; then
+            APP_NAME=$(echo "$PAYLOAD" | grep -o '"appName":"[^"]*"' | cut -d'"' -f4 || echo "Web2APK")
+            PACKAGE_NAME=$(echo "$PAYLOAD" | grep -o '"packageName":"[^"]*"' | cut -d'"' -f4 || echo "com.web2apk.app")
+          fi
+          
+          echo "App Name: $APP_NAME"
+          echo "Package: $PACKAGE_NAME"
+          
+          # Build logic here - modify based on your project structure
+          if [ -f "build.gradle" ]; then
+            ./gradlew build --no-daemon
+          else
+            echo "Warning: No build.gradle found. Creating minimal APK..."
+            mkdir -p build/outputs/apk/release
+            # Placeholder - in real scenario, you'd have your build setup here
+          fi
+          
+          # Ensure output directory exists
+          mkdir -p build/outputs/apk/release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apk-${{ inputs.jobId }}
+          path: build/outputs/apk/release/**/*.apk
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Check APK existence
+        run: |
+          if [ -f build/outputs/apk/release/*.apk ]; then
+            echo "✓ APK build successful"
+            ls -lh build/outputs/apk/release/*.apk
+          else
+            echo "✗ No APK found in build output"
+            exit 1
+          fi
