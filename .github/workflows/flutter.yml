@@ -1,0 +1,86 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: 'Build Job ID'
+        required: true
+      userId:
+        description: 'User ID'
+        required: true
+      payload:
+        description: 'Build Payload (JSON)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Parse Payload
+        id: payload
+        run: |
+          PAYLOAD=`echo '${{ inputs.payload }}' | base64 -w 0`
+          echo "payload_b64=${PAYLOAD}" >> $GITHUB_OUTPUT
+
+      - name: Download ZIP if needed
+        run: |
+          PAYLOAD=${{ inputs.payload }}
+          if echo "$PAYLOAD" | grep -q "zipAssetUrl"; then
+            ZIP_URL=$(echo "$PAYLOAD" | grep -o '"zipAssetUrl":"[^"]*"' | cut -d'"' -f4)
+            if [ -n "$ZIP_URL" ]; then
+              echo "Downloading project ZIP..."
+              curl -L -o project.zip "$ZIP_URL" || echo "ZIP download failed, continuing..."
+              if [ -f "project.zip" ]; then
+                unzip -q project.zip -d ./ || true
+              fi
+            fi
+          fi
+
+      - name: Get Flutter dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        env:
+          JOB_ID: ${{ inputs.jobId }}
+          PAYLOAD: ${{ inputs.payload }}
+        run: |
+          echo "Starting Flutter build for job: $JOB_ID"
+          
+          # Extract app name from payload if available
+          APP_NAME=$(echo "$PAYLOAD" | grep -o '"appName":"[^"]*"' | cut -d'"' -f4 || echo "Web2APK")
+          echo "Building: $APP_NAME"
+          
+          # Build release APK
+          flutter build apk --release --no-shrink
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apk-${{ inputs.jobId }}
+          path: build/app/outputs/apk/release/**/*.apk
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Check APK existence
+        run: |
+          if [ -f build/app/outputs/apk/release/app-release.apk ]; then
+            echo "✓ Flutter APK build successful"
+            ls -lh build/app/outputs/apk/release/app-release.apk
+          else
+            echo "✗ No APK found in build output"
+            exit 1
+          fi
