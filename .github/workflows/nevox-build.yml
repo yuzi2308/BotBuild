@@ -1,0 +1,46 @@
+name: Nevox Build
+on:
+  workflow_dispatch:
+    inputs:
+      project_dir:
+        description: Folder project Flutter
+        required: true
+        default: '.'
+      apk_name:
+        description: Nama APK
+        required: true
+        default: app
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PROJECT_DIR: ${{ github.event.inputs.project_dir }}
+      APK_NAME: ${{ github.event.inputs.apk_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
+          if [ ! -f pubspec.yaml ]; then echo "pubspec.yaml tidak ditemukan di $PROJECT_DIR"; exit 1; fi
+          [ -d android ] || flutter create . --platforms=android
+          flutter pub get
+          flutter build apk --release
+      - name: Buat Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$PROJECT_DIR/build/app/outputs/flutter-apk/app-release.apk" "$APK_NAME.apk"
+          gh release create "nevox-${{ github.run_id }}" "$APK_NAME.apk" --title "$APK_NAME build ${{ github.run_number }}" --notes "Dibuild via Nevox Cloud Build"
